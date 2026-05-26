@@ -6,10 +6,10 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useTheme } from "next-themes";
 import { useGrantsStore } from "@/store/maps-store";
 import {
-  categories,
   funders,
   type Grant,
   type GrantStatus,
+  type InstrumentType,
 } from "@/mock-data/locations";
 
 const MAP_STYLES = {
@@ -21,10 +21,10 @@ const MAP_STYLES = {
 };
 
 const STATUS_COLOR: Record<GrantStatus, string> = {
-  open: "#10b981", // green
-  "closing-soon": "#f97316", // orange
-  upcoming: "#3b82f6", // blue
-  closed: "#9ca3af", // muted grey
+  open: "#10b981",
+  "closing-soon": "#f97316",
+  upcoming: "#3b82f6",
+  closed: "#9ca3af",
 };
 
 const STATUS_LABEL: Record<GrantStatus, string> = {
@@ -34,11 +34,64 @@ const STATUS_LABEL: Record<GrantStatus, string> = {
   closed: "Closed",
 };
 
-function fmtCurrency(n: number) {
-  if (n >= 1_000_000_000) return `€${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `€${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `€${(n / 1_000).toFixed(0)}K`;
-  return `€${n}`;
+// Marker pin color by instrument type — replaces the old per-sector palette.
+const INSTRUMENT_COLOR: Record<InstrumentType, string> = {
+  grant: "#3b82f6",
+  loan: "#8b5cf6",
+  guarantee: "#0ea5e9",
+  voucher: "#f59e0b",
+  equity: "#ec4899",
+  mixed: "#14b8a6",
+  unknown: "#6b7280",
+};
+
+const INSTRUMENT_LABEL: Record<InstrumentType, string> = {
+  grant: "Grant",
+  loan: "Loan",
+  guarantee: "Guarantee",
+  voucher: "Voucher",
+  equity: "Equity",
+  mixed: "Mixed / blended",
+  unknown: "Unspecified",
+};
+
+function symbolFor(currency: string): string {
+  switch (currency) {
+    case "EUR":
+      return "€";
+    case "USD":
+      return "$";
+    case "GBP":
+      return "£";
+    case "JPY":
+    case "CNY":
+      return "¥";
+    default:
+      return "";
+  }
+}
+
+function fmtAmount(amount: number, currency: string | null): string {
+  const sym = currency ? symbolFor(currency) : "";
+  const prefix = sym || (currency ? `${currency} ` : "");
+  if (amount >= 1_000_000_000) return `${prefix}${(amount / 1_000_000_000).toFixed(1)}B`;
+  if (amount >= 1_000_000) return `${prefix}${(amount / 1_000_000).toFixed(1)}M`;
+  if (amount >= 1_000) return `${prefix}${(amount / 1_000).toFixed(0)}K`;
+  return `${prefix}${amount}`;
+}
+
+function fmtAmountRange(
+  min: number | null,
+  max: number | null,
+  currency: string | null,
+): string | null {
+  if (min !== null && max !== null) {
+    if (min === max) return fmtAmount(max, currency);
+    return `${fmtAmount(min, currency)} – ${fmtAmount(max, currency)}`;
+  }
+  if (max !== null) return `up to ${fmtAmount(max, currency)}`;
+  if (min !== null) return `from ${fmtAmount(min, currency)}`;
+  return null;
 }
 
 function daysUntil(iso: string): number {
@@ -47,16 +100,23 @@ function daysUntil(iso: string): number {
   return Math.ceil((d - now) / (1000 * 60 * 60 * 24));
 }
 
-function fmtDeadline(iso: string, status: GrantStatus): string {
-  const days = daysUntil(iso);
+function fmtDeadline(
+  closesAt: string | null,
+  status: GrantStatus,
+  applicationMode: Grant["applicationMode"],
+): string {
   if (status === "closed") return "Closed";
+  if (!closesAt) {
+    return applicationMode === "rolling" ? "Rolling intake" : "No deadline published";
+  }
+  const days = daysUntil(closesAt);
   if (status === "upcoming") return `Opens in ${Math.max(0, days)} days`;
   if (days < 0) return "Closed";
   if (days === 0) return "Closes today";
   if (days === 1) return "Closes tomorrow";
   if (days <= 30) return `${days} days left`;
   if (days <= 60) return `${Math.floor(days / 7)} weeks left`;
-  return new Date(iso).toLocaleDateString("en-GB", {
+  return new Date(closesAt).toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -96,8 +156,8 @@ export function MapView() {
 
   const grants = getFilteredGrants();
 
-  // Resolve user location once, but DON'T re-center the map — Grant.com is a
-  // global dashboard that should default to a world view.
+  // Resolve user location once, but DON'T re-center the map — OpenSubsidies
+  // is a global dashboard that should default to a world view.
   React.useEffect(() => {
     const getLocationFromIP = async () => {
       try {
@@ -122,7 +182,7 @@ export function MapView() {
         () => {
           getLocationFromIP();
         },
-        { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 }
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 },
       );
     } else {
       getLocationFromIP();
@@ -157,7 +217,7 @@ export function MapView() {
 
     map.addControl(
       new maplibregl.AttributionControl({ compact: true }),
-      "bottom-right"
+      "bottom-right",
     );
 
     map.on("moveend", () => {
@@ -220,9 +280,8 @@ export function MapView() {
     markersRef.current.clear();
 
     grants.forEach((grant) => {
-      const sector = categories.find((c) => c.id === grant.sectorId);
       const funder = funders.find((f) => f.id === grant.funderId);
-      const sectorColor = sector?.color || "#6b7280";
+      const pinColor = INSTRUMENT_COLOR[grant.instrumentType];
       const statusColor = STATUS_COLOR[grant.status];
       const isSelected = selectedGrantId === grant.id;
 
@@ -232,18 +291,15 @@ export function MapView() {
       el.setAttribute("tabindex", "0");
       el.setAttribute(
         "aria-label",
-        `${grant.name} — ${funder?.shortName ?? ""}, ${STATUS_LABEL[grant.status]}`
+        `${grant.name} — ${funder?.shortName ?? ""}, ${STATUS_LABEL[grant.status]}`,
       );
-      // Marker = sector-colored pin, ringed by status color.
-      // transform-origin: bottom keeps the pin tip anchored on hover/select
-      // (no layout shift relative to the actual map coordinate).
       el.innerHTML = `
         <div class="relative cursor-pointer transition-transform duration-150 origin-bottom ${
           isSelected ? "scale-125 z-30" : "hover:scale-110"
         }">
           <svg width="34" height="42" viewBox="0 0 34 42" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0 2px 3px rgba(0,0,0,0.25));">
             <path d="M17 0C7.611 0 0 7.611 0 17C0 30 17 42 17 42C17 42 34 30 34 17C34 7.611 26.389 0 17 0Z" fill="${
-              isSelected ? "var(--foreground)" : sectorColor
+              isSelected ? "var(--foreground)" : pinColor
             }"/>
             <circle cx="17" cy="15" r="9" fill="white"/>
             <circle cx="17" cy="15" r="6" fill="${statusColor}"/>
@@ -276,19 +332,9 @@ export function MapView() {
         if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
         if (popupRef.current) popupRef.current.remove();
 
-        const tagsHtml = grant.tags
-          .slice(0, 3)
-          .map((t) => `<span class="popup-tag">${escapeHtml(t)}</span>`)
-          .join("");
-
-        // Official favicon URL for both the foreground tile and the
-        // diagonal watermark backdrop. Fall back gracefully if the funder
-        // record predates the auto-fill step.
         const faviconUrl = funder?.faviconUrl ?? "";
         const funderName = funder?.name ?? "";
 
-        // Foreground tile in the popup header — renders the official favicon
-        // (parity with the inline FunderFavicon used in GrantCard).
         const popupIconHtml = faviconUrl
           ? `<img class="popup-favicon-img" src="${escapeHtml(faviconUrl)}"
                    alt="${escapeHtml(funderName)} logo"
@@ -301,9 +347,6 @@ export function MapView() {
                <path d="M3 21h18"/><path d="M9 21V11"/><path d="M15 21V11"/>
              </svg>`;
 
-        // Diagonal watermark backdrop — same dirstarter pattern as the
-        // side-panel cards (giant favicon, top-right, rotate 12°, masked,
-        // 10% opacity). Skipped if there is no faviconUrl.
         const popupBackdropHtml = faviconUrl
           ? `<div class="grant-popup-bg" aria-hidden="true">
                <div class="grant-popup-bg-inner">
@@ -314,6 +357,8 @@ export function MapView() {
                </div>
              </div>`
           : "";
+
+        const amountText = fmtAmountRange(grant.minAmount, grant.maxAmount, grant.currency);
 
         const popupContent = `
           <div class="grant-popup" data-popup-hover="true">
@@ -329,32 +374,26 @@ export function MapView() {
                     <span class="popup-status" style="color:${statusColor}">● ${STATUS_LABEL[grant.status]}</span>
                   </div>
                   <h3 class="popup-title">${escapeHtml(grant.name)}</h3>
-                  <p class="popup-category" style="color:${sectorColor}">${escapeHtml(sector?.name ?? "Sector")}</p>
+                  <p class="popup-category" style="color:${pinColor}">${escapeHtml(INSTRUMENT_LABEL[grant.instrumentType])}</p>
                 </div>
               </div>
 
-              <p class="popup-description">${escapeHtml(grant.description)}</p>
-
-              ${tagsHtml ? `<div class="popup-tags">${tagsHtml}</div>` : ""}
+              ${grant.description ? `<p class="popup-description">${escapeHtml(grant.description)}</p>` : ""}
 
               <div class="popup-stats">
-                <div class="popup-stat">
+                ${amountText ? `<div class="popup-stat">
                   <span class="popup-stat-label">Funding</span>
-                  <span class="popup-stat-value">${fmtCurrency(grant.fundingMinEUR)} – ${fmtCurrency(grant.fundingMaxEUR)}</span>
-                </div>
+                  <span class="popup-stat-value">${escapeHtml(amountText)}</span>
+                </div>` : ""}
                 <div class="popup-stat">
                   <span class="popup-stat-label">Deadline</span>
-                  <span class="popup-stat-value popup-stat-deadline">${fmtDeadline(grant.deadline, grant.status)}</span>
-                </div>
-                <div class="popup-stat">
-                  <span class="popup-stat-label">Match</span>
-                  <span class="popup-stat-value popup-stat-match">${grant.matchScore}%</span>
+                  <span class="popup-stat-value popup-stat-deadline">${escapeHtml(fmtDeadline(grant.closesAt, grant.status, grant.applicationMode))}</span>
                 </div>
               </div>
 
               <div class="popup-footer">
-                <span class="popup-scope">${escapeHtml(grant.geographicScopeLabel)}</span>
-                <span class="popup-budget">Annual pool ${fmtCurrency(grant.totalAnnualBudgetEUR)}</span>
+                <span class="popup-scope">${escapeHtml(funder?.countryName ?? "")}</span>
+                ${funder?.type ? `<span class="popup-budget">${escapeHtml(funder.type)}</span>` : ""}
               </div>
             </div>
           </div>

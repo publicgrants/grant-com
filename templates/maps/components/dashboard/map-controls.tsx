@@ -110,7 +110,7 @@ export function MapControls() {
             <Globe2 className="size-3" />
           </div>
           <span className="text-xs font-semibold tracking-tight">
-            Grant<span className="text-muted-foreground">.com</span>
+            Open<span className="text-muted-foreground">Subsidies</span>
           </span>
           <span className="text-[10px] text-muted-foreground border-l pl-2 ml-1">Beta</span>
         </div>
@@ -151,8 +151,9 @@ export function MapControls() {
             })}
             <DropdownMenuSeparator />
             <div className="px-2 py-1.5 text-[10px] text-muted-foreground leading-relaxed">
-              Markers are colour-coded by sector with a status ring (open ·
-              closing · upcoming · closed).
+              Markers are colour-coded by instrument (grant · loan ·
+              guarantee · voucher · equity · mixed) with a status ring
+              (open · closing · upcoming · closed).
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -164,13 +165,13 @@ export function MapControls() {
           size="icon"
           className="bg-background! size-11 dash-floating"
           asChild
-          title="Open Grant.com AI connector"
+          title="Open OpenSubsidies AI connector"
         >
           <Link
-            href="https://grant.com/connectors"
+            href="https://www.opensubsidies.com/connectors"
             target="_blank"
             rel="noopener noreferrer"
-            aria-label="Open Grant.com AI connector in a new tab"
+            aria-label="Open OpenSubsidies AI connector in a new tab"
           >
             <Sparkles className="size-4" />
           </Link>

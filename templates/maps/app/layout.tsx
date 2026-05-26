@@ -15,10 +15,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Grant.com — Global Grant Intelligence",
+  title: "OpenSubsidies — Global Grant Intelligence",
   description:
-    "The category-defining map of public grants worldwide. Discover, filter and watch every open grant scheme — for SMEs, startups, researchers and corporates — across the EU, US, Nordics, APAC and multilateral funders. Powered by Virkely's real-time ingestion infrastructure and the Grant Matching & Grant Writing AI connectors.",
-  applicationName: "Grant.com",
+    "The open, public map of grant funders and schemes worldwide. Discover, filter and watch grant programmes — across the EU, US, Nordics, APAC and multilateral funders — sourced from the grants-sources catalog.",
+  applicationName: "OpenSubsidies",
   keywords: [
     "grants",
     "public funding",
@@ -29,15 +29,14 @@ export const metadata: Metadata = {
     "NIH grants",
     "Innovation Norway",
     "Bpifrance",
-    "Grant Matching",
-    "Grant Writing",
-    "AI connector",
+    "open data",
+    "grants catalog",
   ],
-  authors: [{ name: "Grant.com" }],
+  authors: [{ name: "OpenSubsidies" }],
   openGraph: {
-    title: "Grant.com — Global Grant Intelligence",
+    title: "OpenSubsidies — Global Grant Intelligence",
     description:
-      "The interactive map of every public grant in the world. From Horizon Europe to SBIR to Innovation Norway — one canonical, AI-native catalogue.",
+      "The open, interactive map of grant funders and schemes worldwide — sourced from the grants-sources catalog.",
     type: "website",
   },
 };

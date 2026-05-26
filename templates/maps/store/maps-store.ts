@@ -1,11 +1,12 @@
 // =============================================================================
-// Grant.com — Global Grant Intelligence Store
+// OpenSubsidies — Global Grant Intelligence Store
 // =============================================================================
 // Filename is preserved (`store/maps-store.ts`) for compatibility, but this
-// store is now the central state container for the Grant.com dashboard:
-// grants, sector filters, instrument-tag filters, search, sort modes, the
-// user's watchlist (favorites) and recently viewed grants, plus the map
-// view-state (center, zoom, style) and the user's geolocation.
+// store is the central state container for the OpenSubsidies dashboard:
+// grants, country / funder-type / instrument-type / application-mode
+// filters, search, sort modes, the user's watchlist (favorites) and recently
+// viewed grants, plus the map view-state (center, zoom, style) and the
+// user's geolocation.
 // =============================================================================
 
 import { create } from "zustand";
@@ -16,6 +17,8 @@ import {
   type GrantStatus,
   type FunderType,
   type Funder,
+  type InstrumentType,
+  type ApplicationMode,
 } from "@/mock-data/locations";
 
 type ViewMode = "map" | "list" | "split";
@@ -24,12 +27,10 @@ type MapStyle = "default" | "streets" | "outdoors" | "satellite";
 export type GrantSortBy =
   | "deadline-soonest"
   | "funding-largest"
-  | "match-score"
   | "newest"
   | "oldest"
   | "alpha-az"
-  | "alpha-za"
-  | "most-allocated";
+  | "alpha-za";
 
 export type FundingSizeBucket =
   | "any"
@@ -39,15 +40,17 @@ export type FundingSizeBucket =
   | "large" // 2M–10M
   | "mega"; // >10M
 
+export type CountryFilter = "all" | string;
+
 interface GrantsState {
   grants: Grant[];
 
   // Filters
-  selectedSector: string; // "all" or sector id
-  selectedTags: string[];
+  selectedCountry: CountryFilter;
+  selectedInstrumentTypes: InstrumentType[];
   selectedStatuses: GrantStatus[];
   selectedFunderTypes: FunderType[];
-  selectedRegion: string; // "all", "EU", "NO", "US", "Nordics", "GLOBAL"
+  selectedApplicationMode: ApplicationMode | "all";
   fundingSize: FundingSizeBucket;
   searchQuery: string;
   sortBy: GrantSortBy;
@@ -62,12 +65,12 @@ interface GrantsState {
   viewMode: ViewMode;
 
   // ── Actions ──────────────────────────────────────────────────────────────
-  setSelectedSector: (sectorId: string) => void;
-  toggleTag: (tagId: string) => void;
-  clearTags: () => void;
+  setSelectedCountry: (country: CountryFilter) => void;
+  toggleInstrumentType: (t: InstrumentType) => void;
+  clearInstrumentTypes: () => void;
   toggleStatus: (status: GrantStatus) => void;
   toggleFunderType: (t: FunderType) => void;
-  setSelectedRegion: (r: string) => void;
+  setSelectedApplicationMode: (m: ApplicationMode | "all") => void;
   setFundingSize: (b: FundingSizeBucket) => void;
   setSearchQuery: (q: string) => void;
   setSortBy: (s: GrantSortBy) => void;
@@ -91,37 +94,13 @@ interface GrantsState {
     upcomingCount: number;
     countriesCovered: number;
     fundersIndexed: number;
-    totalAnnualBudgetEUR: number;
   };
-}
-
-// ── Filter helpers ──────────────────────────────────────────────────────────
-const REGION_GROUPS: Record<string, string[]> = {
-  Nordics: ["NO", "SE", "FI", "DK", "IS"],
-  EU: [
-    "EU", "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE",
-    "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO",
-    "SK", "SI", "ES", "SE",
-  ],
-  "North America": ["US", "CA"],
-  "Asia & APAC": ["JP", "KR", "AU", "IN", "IL"],
-  "Latin America": ["BR", "MX", "AR", "CL", "CO"],
-  Global: ["GLOBAL"],
-};
-
-function inRegion(grant: Grant, region: string, fundersList: Funder[]) {
-  if (region === "all") return true;
-  const funder = fundersList.find((f) => f.id === grant.funderId);
-  if (!funder) return false;
-  if (region === funder.country) return true;
-  const group = REGION_GROUPS[region];
-  if (!group) return false;
-  return group.includes(funder.country);
 }
 
 function inFundingBucket(grant: Grant, bucket: FundingSizeBucket): boolean {
   if (bucket === "any") return true;
-  const max = grant.fundingMaxEUR;
+  const max = grant.maxAmount;
+  if (max === null) return false; // unknown amounts excluded from specific buckets
   switch (bucket) {
     case "micro":
       return max < 100_000;
@@ -136,20 +115,18 @@ function inFundingBucket(grant: Grant, bucket: FundingSizeBucket): boolean {
   }
 }
 
-// Funders list is referenced for region & funder-type filtering; imported
-// directly above. There is no circular dependency.
-function getFunders(): Funder[] {
-  return allFunders;
+function funderById(funders: Funder[], id: string): Funder | undefined {
+  return funders.find((f) => f.id === id);
 }
 
 export const useGrantsStore = create<GrantsState>((set, get) => ({
   grants: initialGrants,
 
-  selectedSector: "all",
-  selectedTags: [],
+  selectedCountry: "all",
+  selectedInstrumentTypes: [],
   selectedStatuses: [],
   selectedFunderTypes: [],
-  selectedRegion: "all",
+  selectedApplicationMode: "all",
   fundingSize: "any",
   searchQuery: "",
   sortBy: "deadline-soonest",
@@ -162,26 +139,27 @@ export const useGrantsStore = create<GrantsState>((set, get) => ({
   isPanelVisible: true,
   viewMode: "split",
 
-  setSelectedSector: (sectorId) => {
+  setSelectedCountry: (country) => {
     const state = get();
-    const next: Partial<GrantsState> = { selectedSector: sectorId };
-    if (state.selectedGrantId) {
+    const next: Partial<GrantsState> = { selectedCountry: country };
+    if (state.selectedGrantId && country !== "all") {
       const g = state.grants.find((x) => x.id === state.selectedGrantId);
-      if (g && sectorId !== "all" && g.sectorId !== sectorId) {
-        next.selectedGrantId = null;
+      if (g) {
+        const f = funderById(allFunders, g.funderId);
+        if (!f || f.country !== country) next.selectedGrantId = null;
       }
     }
     set(next);
   },
 
-  toggleTag: (tagId) =>
+  toggleInstrumentType: (t) =>
     set((s) => ({
-      selectedTags: s.selectedTags.includes(tagId)
-        ? s.selectedTags.filter((t) => t !== tagId)
-        : [...s.selectedTags, tagId],
+      selectedInstrumentTypes: s.selectedInstrumentTypes.includes(t)
+        ? s.selectedInstrumentTypes.filter((x) => x !== t)
+        : [...s.selectedInstrumentTypes, t],
     })),
 
-  clearTags: () => set({ selectedTags: [] }),
+  clearInstrumentTypes: () => set({ selectedInstrumentTypes: [] }),
 
   toggleStatus: (status) =>
     set((s) => ({
@@ -197,23 +175,20 @@ export const useGrantsStore = create<GrantsState>((set, get) => ({
         : [...s.selectedFunderTypes, t],
     })),
 
-  setSelectedRegion: (r) => set({ selectedRegion: r }),
+  setSelectedApplicationMode: (m) => set({ selectedApplicationMode: m }),
   setFundingSize: (b) => set({ fundingSize: b }),
-
   setSearchQuery: (q) => set({ searchQuery: q }),
-
   setSortBy: (s) => set({ sortBy: s }),
 
   toggleSaved: (grantId) =>
     set((s) => ({
       grants: s.grants.map((g) =>
-        g.id === grantId ? { ...g, isSaved: !g.isSaved } : g
+        g.id === grantId ? { ...g, isSaved: !g.isSaved } : g,
       ),
     })),
 
   selectGrant: (grantId) =>
     set((s) => {
-      // Increment view count + lastViewed when a grant becomes selected
       if (grantId && grantId !== s.selectedGrantId) {
         const today = new Date().toISOString().slice(0, 10);
         return {
@@ -221,7 +196,7 @@ export const useGrantsStore = create<GrantsState>((set, get) => ({
           grants: s.grants.map((g) =>
             g.id === grantId
               ? { ...g, viewCount: g.viewCount + 1, lastViewed: today }
-              : g
+              : g,
           ),
         };
       }
@@ -238,26 +213,28 @@ export const useGrantsStore = create<GrantsState>((set, get) => ({
   // ── Selectors ────────────────────────────────────────────────────────────
   getFilteredGrants: () => {
     const s = get();
-    const funders = getFunders();
     let out = [...s.grants];
 
-    if (s.selectedSector !== "all") {
-      out = out.filter((g) => g.sectorId === s.selectedSector);
+    if (s.selectedCountry !== "all") {
+      out = out.filter((g) => {
+        const f = funderById(allFunders, g.funderId);
+        return f?.country === s.selectedCountry;
+      });
     }
-    if (s.selectedTags.length > 0) {
-      out = out.filter((g) => s.selectedTags.some((t) => g.tags.includes(t)));
+    if (s.selectedInstrumentTypes.length > 0) {
+      out = out.filter((g) => s.selectedInstrumentTypes.includes(g.instrumentType));
     }
     if (s.selectedStatuses.length > 0) {
       out = out.filter((g) => s.selectedStatuses.includes(g.status));
     }
     if (s.selectedFunderTypes.length > 0) {
       out = out.filter((g) => {
-        const f = funders.find((x) => x.id === g.funderId);
+        const f = funderById(allFunders, g.funderId);
         return f ? s.selectedFunderTypes.includes(f.type) : false;
       });
     }
-    if (s.selectedRegion !== "all") {
-      out = out.filter((g) => inRegion(g, s.selectedRegion, funders));
+    if (s.selectedApplicationMode !== "all") {
+      out = out.filter((g) => g.applicationMode === s.selectedApplicationMode);
     }
     if (s.fundingSize !== "any") {
       out = out.filter((g) => inFundingBucket(g, s.fundingSize));
@@ -265,13 +242,12 @@ export const useGrantsStore = create<GrantsState>((set, get) => ({
     if (s.searchQuery) {
       const q = s.searchQuery.toLowerCase();
       out = out.filter((g) => {
-        const f = funders.find((x) => x.id === g.funderId);
+        const f = funderById(allFunders, g.funderId);
         return (
           g.name.toLowerCase().includes(q) ||
-          g.description.toLowerCase().includes(q) ||
+          g.prose.toLowerCase().includes(q) ||
           (f && f.name.toLowerCase().includes(q)) ||
-          (f && f.shortName.toLowerCase().includes(q)) ||
-          g.tags.some((t) => t.toLowerCase().includes(q))
+          (f && f.shortName.toLowerCase().includes(q))
         );
       });
     }
@@ -288,11 +264,14 @@ export const useGrantsStore = create<GrantsState>((set, get) => ({
       out = out.filter(
         (g) =>
           g.name.toLowerCase().includes(q) ||
-          g.description.toLowerCase().includes(q)
+          g.prose.toLowerCase().includes(q),
       );
     }
-    if (s.selectedSector !== "all") {
-      out = out.filter((g) => g.sectorId === s.selectedSector);
+    if (s.selectedCountry !== "all") {
+      out = out.filter((g) => {
+        const f = funderById(allFunders, g.funderId);
+        return f?.country === s.selectedCountry;
+      });
     }
     out.sort((a, b) => sortCompare(a, b, s.sortBy));
     return out;
@@ -301,48 +280,47 @@ export const useGrantsStore = create<GrantsState>((set, get) => ({
   getRecentGrants: () => {
     const s = get();
     let out = [...s.grants];
-    if (s.selectedSector !== "all") {
-      out = out.filter((g) => g.sectorId === s.selectedSector);
+    if (s.selectedCountry !== "all") {
+      out = out.filter((g) => {
+        const f = funderById(allFunders, g.funderId);
+        return f?.country === s.selectedCountry;
+      });
     }
     if (s.searchQuery) {
       const q = s.searchQuery.toLowerCase();
       out = out.filter(
         (g) =>
           g.name.toLowerCase().includes(q) ||
-          g.description.toLowerCase().includes(q)
+          g.prose.toLowerCase().includes(q),
       );
     }
-    // Sort by lastViewed (recent first), then publishedAt
+    // Sort by lastViewed (recent first); fall back to scheme name.
+    out = out.filter((g) => g.lastViewed);
     out.sort((a, b) => {
       const at = a.lastViewed ? new Date(a.lastViewed).getTime() : 0;
       const bt = b.lastViewed ? new Date(b.lastViewed).getTime() : 0;
-      if (bt !== at) return bt - at;
-      return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+      return bt - at;
     });
     return out.slice(0, 25);
   },
 
   getGlobalStats: () => {
     const s = get();
-    const funders = getFunders();
     const total = s.grants.length;
-    const openNow = s.grants.filter((g) => g.status === "open" || g.status === "closing-soon").length;
+    const openNow = s.grants.filter(
+      (g) => g.status === "open" || g.status === "closing-soon",
+    ).length;
     const closingSoon = s.grants.filter((g) => g.status === "closing-soon").length;
     const upcoming = s.grants.filter((g) => g.status === "upcoming").length;
     const countrySet = new Set<string>();
-    funders.forEach((f) => countrySet.add(f.country));
-    const totalAnnual = s.grants.reduce(
-      (sum, g) => sum + (g.totalAnnualBudgetEUR || 0),
-      0
-    );
+    allFunders.forEach((f) => countrySet.add(f.country));
     return {
       totalGrants: total,
       openNow,
       closingSoon,
       upcomingCount: upcoming,
       countriesCovered: countrySet.size,
-      fundersIndexed: funders.length,
-      totalAnnualBudgetEUR: totalAnnual,
+      fundersIndexed: allFunders.length,
     };
   },
 }));
@@ -351,25 +329,33 @@ export const useGrantsStore = create<GrantsState>((set, get) => ({
 export const useMapsStore = useGrantsStore;
 
 // ── Sort comparator ─────────────────────────────────────────────────────────
+const FAR_FUTURE = "9999-12-31";
+
 function sortCompare(a: Grant, b: Grant, sortBy: GrantSortBy): number {
   switch (sortBy) {
     case "deadline-soonest": {
-      // closed last; otherwise nearest deadline first
+      // closed last; otherwise nearest deadline first. Schemes without a
+      // closesAt sort to the end of the "non-closed" group.
       const aClosed = a.status === "closed" ? 1 : 0;
       const bClosed = b.status === "closed" ? 1 : 0;
       if (aClosed !== bClosed) return aClosed - bClosed;
-      return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
+      const ad = Date.parse(a.closesAt ?? FAR_FUTURE);
+      const bd = Date.parse(b.closesAt ?? FAR_FUTURE);
+      return ad - bd;
     }
     case "funding-largest":
-      return b.fundingMaxEUR - a.fundingMaxEUR;
-    case "match-score":
-      return b.matchScore - a.matchScore;
-    case "most-allocated":
-      return b.totalAnnualBudgetEUR - a.totalAnnualBudgetEUR;
-    case "newest":
-      return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
-    case "oldest":
-      return new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime();
+      return (b.maxAmount ?? 0) - (a.maxAmount ?? 0);
+    case "newest": {
+      const at = Date.parse(a.sourceUpdatedAt ?? "");
+      const bt = Date.parse(b.sourceUpdatedAt ?? "");
+      return (Number.isFinite(bt) ? bt : 0) - (Number.isFinite(at) ? at : 0);
+    }
+    case "oldest": {
+      const at = Date.parse(a.sourceUpdatedAt ?? "");
+      const bt = Date.parse(b.sourceUpdatedAt ?? "");
+      return (Number.isFinite(at) ? at : Number.MAX_SAFE_INTEGER) -
+        (Number.isFinite(bt) ? bt : Number.MAX_SAFE_INTEGER);
+    }
     case "alpha-az":
       return a.name.localeCompare(b.name);
     case "alpha-za":

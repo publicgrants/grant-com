@@ -12,7 +12,6 @@ import {
   ArrowUpAZ,
   CalendarArrowDown,
   CalendarArrowUp,
-  TrendingUp,
   Check,
   Globe2,
   Sparkles,
@@ -21,11 +20,8 @@ import {
   Banknote,
   Target,
   Layers,
-  Users2,
-  Award,
   Building2,
   ScrollText,
-  History,
   ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -41,11 +37,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useGrantsStore, type GrantSortBy, type FundingSizeBucket } from "@/store/maps-store";
 import {
-  categories,
   funders,
-  tags as allTags,
   type Grant,
   type GrantStatus,
+  type InstrumentType,
 } from "@/mock-data/locations";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
@@ -119,18 +114,43 @@ const FUNDING_BUCKETS: { id: FundingSizeBucket; label: string }[] = [
   { id: "mega", label: "> €10M — Mega" },
 ];
 
-function fmtCurrency(n: number) {
-  if (n >= 1_000_000_000) return `€${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `€${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `€${(n / 1_000).toFixed(0)}K`;
-  return `€${n}`;
+function symbolFor(currency: string): string {
+  switch (currency) {
+    case "EUR":
+      return "€";
+    case "USD":
+      return "$";
+    case "GBP":
+      return "£";
+    case "JPY":
+    case "CNY":
+      return "¥";
+    default:
+      return "";
+  }
 }
 
-function fmtBudget(n: number) {
-  if (n >= 1_000_000_000) return `€${(n / 1_000_000_000).toFixed(2)}B`;
-  if (n >= 1_000_000) return `€${(n / 1_000_000).toFixed(0)}M`;
-  if (n >= 1_000) return `€${(n / 1_000).toFixed(0)}K`;
-  return `€${n}`;
+function fmtAmount(amount: number, currency: string | null): string {
+  const sym = currency ? symbolFor(currency) : "";
+  const prefix = sym || (currency ? `${currency} ` : "");
+  if (amount >= 1_000_000_000) return `${prefix}${(amount / 1_000_000_000).toFixed(1)}B`;
+  if (amount >= 1_000_000) return `${prefix}${(amount / 1_000_000).toFixed(1)}M`;
+  if (amount >= 1_000) return `${prefix}${(amount / 1_000).toFixed(0)}K`;
+  return `${prefix}${amount}`;
+}
+
+function fmtAmountRange(
+  min: number | null,
+  max: number | null,
+  currency: string | null,
+): string | null {
+  if (min !== null && max !== null) {
+    if (min === max) return fmtAmount(max, currency);
+    return `${fmtAmount(min, currency)}–${fmtAmount(max, currency)}`;
+  }
+  if (max !== null) return `up to ${fmtAmount(max, currency)}`;
+  if (min !== null) return `from ${fmtAmount(min, currency)}`;
+  return null;
 }
 
 function daysUntil(iso: string): number {
@@ -139,9 +159,18 @@ function daysUntil(iso: string): number {
   return Math.ceil((d - now) / (1000 * 60 * 60 * 24));
 }
 
-function fmtDeadline(iso: string, status: GrantStatus): { label: string; tone: "danger" | "warn" | "ok" | "muted" } {
-  const days = daysUntil(iso);
+function fmtDeadline(
+  closesAt: string | null,
+  status: GrantStatus,
+  applicationMode: Grant["applicationMode"],
+): { label: string; tone: "danger" | "warn" | "ok" | "muted" } {
   if (status === "closed") return { label: "Closed", tone: "muted" };
+  if (!closesAt) {
+    return applicationMode === "rolling"
+      ? { label: "Rolling intake", tone: "ok" }
+      : { label: "No published deadline", tone: "muted" };
+  }
+  const days = daysUntil(closesAt);
   if (status === "upcoming") return { label: `Opens in ${Math.max(0, days)}d`, tone: "ok" };
   if (days < 0) return { label: "Closed", tone: "muted" };
   if (days === 0) return { label: "Closes today", tone: "danger" };
@@ -149,7 +178,7 @@ function fmtDeadline(iso: string, status: GrantStatus): { label: string; tone: "
   if (days <= 14) return { label: `${days} days left`, tone: "danger" };
   if (days <= 60) return { label: `${days} days left`, tone: "warn" };
   return {
-    label: new Date(iso).toLocaleDateString("en-GB", {
+    label: new Date(closesAt).toLocaleDateString("en-GB", {
       day: "numeric",
       month: "short",
       year: "numeric",
@@ -157,6 +186,16 @@ function fmtDeadline(iso: string, status: GrantStatus): { label: string; tone: "
     tone: "ok",
   };
 }
+
+const INSTRUMENT_LABEL: Record<InstrumentType, string> = {
+  grant: "Grant",
+  loan: "Loan",
+  guarantee: "Guarantee",
+  voucher: "Voucher",
+  equity: "Equity",
+  mixed: "Mixed / blended",
+  unknown: "Unspecified instrument",
+};
 
 export function MapsPanel({ mode = "all" }: GrantsPanelProps) {
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
@@ -234,8 +273,6 @@ export function MapsPanel({ mode = "all" }: GrantsPanelProps) {
     selectGrant(null);
   };
 
-  const getTagName = (id: string) => allTags.find((t) => t.id === id)?.name || id;
-
   if (!isPanelVisible) {
     return (
       <Button
@@ -243,7 +280,7 @@ export function MapsPanel({ mode = "all" }: GrantsPanelProps) {
         size="icon"
         className="absolute left-4 top-4 z-20 sm:hidden size-11 bg-background! dash-floating"
         onClick={() => setPanelVisible(true)}
-        aria-label="Open Grant.com panel"
+        aria-label="Open OpenSubsidies panel"
       >
         <Globe2 className="size-5" />
       </Button>
@@ -292,8 +329,8 @@ export function MapsPanel({ mode = "all" }: GrantsPanelProps) {
               accent="emerald"
             />
             <StatPill
-              label="Annual pool"
-              value={fmtBudget(stats.totalAnnualBudgetEUR)}
+              label="Countries"
+              value={stats.countriesCovered.toString()}
               accent="brand"
             />
             <StatPill
@@ -312,8 +349,8 @@ export function MapsPanel({ mode = "all" }: GrantsPanelProps) {
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Search grants, funders, sectors…"
-              aria-label="Search grants, funders, sectors"
+              placeholder="Search grants, funders…"
+              aria-label="Search grants and funders"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className={cn("pl-8 h-9", searchQuery && "pr-8")}
@@ -343,14 +380,8 @@ export function MapsPanel({ mode = "all" }: GrantsPanelProps) {
               <SortItem id="deadline-soonest" current={sortBy} setSortBy={setSortBy} icon={CalendarClock}>
                 Deadline (soonest)
               </SortItem>
-              <SortItem id="match-score" current={sortBy} setSortBy={setSortBy} icon={Sparkles}>
-                Best match for me
-              </SortItem>
               <SortItem id="funding-largest" current={sortBy} setSortBy={setSortBy} icon={Banknote}>
                 Largest funding ceiling
-              </SortItem>
-              <SortItem id="most-allocated" current={sortBy} setSortBy={setSortBy} icon={TrendingUp}>
-                Largest annual pool
               </SortItem>
               <DropdownMenuSeparator />
               <SortItem id="newest" current={sortBy} setSortBy={setSortBy} icon={CalendarArrowDown}>
@@ -462,7 +493,6 @@ export function MapsPanel({ mode = "all" }: GrantsPanelProps) {
             </div>
           ) : (
             grants.map((grant) => {
-              const sector = categories.find((c) => c.id === grant.sectorId);
               const funder = funders.find((f) => f.id === grant.funderId);
               const isSelected = selectedGrantId === grant.id;
 
@@ -471,16 +501,14 @@ export function MapsPanel({ mode = "all" }: GrantsPanelProps) {
                   <GrantDetail
                     key={grant.id}
                     grant={grant}
-                    sectorName={sector?.name ?? "Sector"}
-                    sectorColor={sector?.color ?? "#6b7280"}
                     funderName={funder?.name ?? ""}
                     funderShort={funder?.shortName ?? ""}
                     funderFaviconUrl={funder?.faviconUrl ?? ""}
                     funderHQ={funder?.hq ?? ""}
-                    funderType={funder?.type ?? "agency"}
+                    funderType={funder?.type ?? "unknown"}
+                    funderCountryName={funder?.countryName ?? ""}
                     onClose={handleClose}
                     onToggleSaved={() => toggleSaved(grant.id)}
-                    getTagName={getTagName}
                   />
                 );
               }
@@ -489,9 +517,6 @@ export function MapsPanel({ mode = "all" }: GrantsPanelProps) {
                 <GrantCard
                   key={grant.id}
                   grant={grant}
-                  mode={mode}
-                  sectorName={sector?.name ?? "Sector"}
-                  sectorColor={sector?.color ?? "#6b7280"}
                   funderName={funder?.name ?? ""}
                   funderShort={funder?.shortName ?? ""}
                   funderFaviconUrl={funder?.faviconUrl ?? ""}
@@ -500,7 +525,6 @@ export function MapsPanel({ mode = "all" }: GrantsPanelProps) {
                     e.stopPropagation();
                     toggleSaved(grant.id);
                   }}
-                  getTagName={getTagName}
                 />
               );
             })
@@ -559,29 +583,23 @@ function StatPill({
 
 function GrantCard({
   grant,
-  mode,
-  sectorName,
-  sectorColor,
   funderName,
   funderShort,
   funderFaviconUrl,
   onClick,
   onToggleSaved,
-  getTagName,
 }: {
   grant: Grant;
-  mode: PanelMode;
-  sectorName: string;
-  sectorColor: string;
   funderName: string;
   funderShort: string;
   funderFaviconUrl: string;
   onClick: () => void;
   onToggleSaved: (e: React.MouseEvent) => void;
-  getTagName: (id: string) => string;
 }) {
-  const dl = fmtDeadline(grant.deadline, grant.status);
+  const dl = fmtDeadline(grant.closesAt, grant.status, grant.applicationMode);
   const status = STATUS_META[grant.status];
+  const amountText = fmtAmountRange(grant.minAmount, grant.maxAmount, grant.currency);
+  const instrumentLabel = INSTRUMENT_LABEL[grant.instrumentType];
 
   return (
     <div
@@ -627,8 +645,8 @@ function GrantCard({
           <h3 className="font-medium text-sm leading-snug mt-0.5 line-clamp-2">
             {grant.name}
           </h3>
-          <p className="text-[11px] text-muted-foreground truncate mt-0.5" style={{ color: sectorColor }}>
-            {sectorName}
+          <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+            {funderName}
           </p>
         </div>
         <div className="flex items-center gap-0.5 shrink-0 -mr-1">
@@ -652,12 +670,12 @@ function GrantCard({
       </div>
 
       <div className="relative z-10 flex items-center gap-3 flex-wrap text-xs">
-        <span className="inline-flex items-center gap-1 text-muted-foreground">
-          <Banknote className="size-3" />
-          <span className="tabular-nums">
-            {fmtCurrency(grant.fundingMinEUR)}–{fmtCurrency(grant.fundingMaxEUR)}
+        {amountText && (
+          <span className="inline-flex items-center gap-1 text-muted-foreground">
+            <Banknote className="size-3" />
+            <span className="tabular-nums">{amountText}</span>
           </span>
-        </span>
+        )}
         <span
           className={cn(
             "inline-flex items-center gap-1 font-medium tabular-nums",
@@ -670,26 +688,13 @@ function GrantCard({
           <CalendarClock className="size-3" />
           {dl.label}
         </span>
-        <span className="inline-flex items-center gap-1 text-muted-foreground">
-          <Sparkles className="size-3" />
-          <span className="tabular-nums">{grant.matchScore}% match</span>
-        </span>
       </div>
 
-      {grant.tags.length > 0 && (
-        <div className="relative z-10 flex flex-wrap gap-1">
-          {grant.tags.slice(0, 3).map((t) => (
-            <Badge key={t} variant="secondary" className="text-[10px] h-5">
-              {getTagName(t)}
-            </Badge>
-          ))}
-          {grant.tags.length > 3 && (
-            <Badge variant="outline" className="text-[10px] h-5">
-              +{grant.tags.length - 3}
-            </Badge>
-          )}
-        </div>
-      )}
+      <div className="relative z-10 flex flex-wrap gap-1">
+        <Badge variant="secondary" className="text-[10px] h-5">
+          {instrumentLabel}
+        </Badge>
+      </div>
     </div>
   );
 }
@@ -795,45 +800,48 @@ function FunderFavicon({
 
 function GrantDetail({
   grant,
-  sectorName,
-  sectorColor,
   funderName,
   funderShort,
   funderFaviconUrl,
   funderHQ,
   funderType,
+  funderCountryName,
   onClose,
   onToggleSaved,
-  getTagName,
 }: {
   grant: Grant;
-  sectorName: string;
-  sectorColor: string;
   funderName: string;
   funderShort: string;
   funderFaviconUrl: string;
   funderHQ: string;
   funderType: string;
+  funderCountryName: string;
   onClose: (e: React.MouseEvent) => void;
   onToggleSaved: () => void;
-  getTagName: (id: string) => string;
 }) {
   const [isOpening, setIsOpening] = React.useState(false);
-  const dl = fmtDeadline(grant.deadline, grant.status);
+  const dl = fmtDeadline(grant.closesAt, grant.status, grant.applicationMode);
   const status = STATUS_META[grant.status];
+  const amountText = fmtAmountRange(grant.minAmount, grant.maxAmount, grant.currency);
+  const instrumentLabel = INSTRUMENT_LABEL[grant.instrumentType];
+  const applyHref = grant.applicationUrl ?? grant.url;
+  const openSub = grant.opensAt
+    ? `Opens ${new Date(grant.opensAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`
+    : grant.applicationMode === "rolling"
+      ? "Rolling intake"
+      : undefined;
+  const amountSub = grant.fundingRatePct !== null
+    ? `${grant.fundingRatePct}% of project costs`
+    : undefined;
 
   const handleOpenPortal = (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsOpening(true);
-    // External tab open
     setTimeout(() => {
-      window.open(grant.applicationUrl, "_blank", "noopener,noreferrer");
+      window.open(applyHref, "_blank", "noopener,noreferrer");
       setIsOpening(false);
     }, 350);
   };
-
-  // Allocation history mini-bars
-  const maxAlloc = Math.max(...grant.allocations.map((a) => a.totalAwardedEUR), 1);
 
   return (
     <div
@@ -878,8 +886,8 @@ function GrantDetail({
               <h3 className="font-semibold text-base leading-tight mt-1">
                 {grant.name}
               </h3>
-              <p className="text-xs mt-1" style={{ color: sectorColor }}>
-                {sectorName}
+              <p className="text-xs mt-1 text-muted-foreground">
+                {instrumentLabel}
               </p>
             </div>
           </div>
@@ -899,15 +907,27 @@ function GrantDetail({
           <Building2 className="size-3.5 shrink-0" />
           <span className="truncate">
             <span className="text-foreground font-medium">{funderName}</span>
-            <span className="mx-1.5">·</span>
-            <span>{funderHQ}</span>
+            {funderHQ && (
+              <>
+                <span className="mx-1.5">·</span>
+                <span>{funderHQ}</span>
+              </>
+            )}
+            {funderCountryName && (
+              <>
+                <span className="mx-1.5">·</span>
+                <span>{funderCountryName}</span>
+              </>
+            )}
             <span className="mx-1.5">·</span>
             <span className="capitalize">{funderType}</span>
           </span>
         </div>
 
-        {/* Description */}
-        <p className="text-sm leading-relaxed mb-4">{grant.description}</p>
+        {/* Short description */}
+        {grant.description && (
+          <p className="text-sm leading-relaxed mb-4">{grant.description}</p>
+        )}
 
         {/* Key metrics grid */}
         <div className="grid grid-cols-2 gap-2 mb-4">
@@ -916,111 +936,72 @@ function GrantDetail({
             label="Deadline"
             value={dl.label}
             tone={dl.tone}
-            sub={`Opened ${new Date(grant.openingDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`}
+            sub={openSub}
           />
-          <MetricBox
-            icon={Banknote}
-            label="Grant size"
-            value={`${fmtCurrency(grant.fundingMinEUR)} – ${fmtCurrency(grant.fundingMaxEUR)}`}
-            sub={`${grant.cofinancingRate}% co-financing`}
-          />
-          <MetricBox
-            icon={Sparkles}
-            label="Fit score"
-            value={`${grant.matchScore}%`}
-            sub="Match for my company"
-          />
-          <MetricBox
-            icon={Award}
-            label="Last cycle"
-            value={`${grant.awardCountLastCycle} awards`}
-            sub={`${grant.successRate.toFixed(1)}% success rate`}
-          />
+          {amountText ? (
+            <MetricBox
+              icon={Banknote}
+              label="Funding amount"
+              value={amountText}
+              sub={amountSub}
+            />
+          ) : (
+            <MetricBox
+              icon={Banknote}
+              label="Funding amount"
+              value="Not stated"
+              tone="muted"
+            />
+          )}
         </div>
 
-        {/* Tags */}
-        {grant.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-4">
-            {grant.tags.map((t) => (
-              <Badge key={t} variant="secondary" className="text-[11px]">
-                {getTagName(t)}
-              </Badge>
-            ))}
-          </div>
+        {/* About this scheme — full prose */}
+        {grant.prose && grant.prose !== grant.description && (
+          <Section icon={ScrollText} title="About this scheme">
+            <div className="text-xs leading-relaxed text-foreground/90 whitespace-pre-line">
+              {grant.prose}
+            </div>
+          </Section>
         )}
 
-        {/* Eligibility */}
-        <Section icon={Users2} title="Eligible applicants">
-          <div className="flex flex-wrap gap-1">
-            {grant.eligibleEntities.map((e) => (
-              <span
-                key={e}
-                className="inline-flex items-center rounded-md border bg-background px-2 py-0.5 text-[11px] capitalize"
-              >
-                {e}
-              </span>
-            ))}
-          </div>
-        </Section>
-
-        <Section icon={Globe2} title="Geographic scope">
-          <p className="text-xs text-muted-foreground">{grant.geographicScopeLabel}</p>
-        </Section>
-
-        {/* Requirements */}
-        {grant.requirements.length > 0 && (
-          <Section icon={ScrollText} title="Key requirements">
+        {/* Documents (only when present in source) */}
+        {grant.documents.length > 0 && (
+          <Section icon={ScrollText} title="Documents">
             <ul className="space-y-1.5">
-              {grant.requirements.map((r, i) => (
-                <li key={i} className="flex gap-2 text-xs leading-relaxed">
+              {grant.documents.map((d, i) => (
+                <li key={`${d.url}-${i}`} className="flex items-start gap-2 text-xs leading-relaxed">
                   <ChevronRight className="size-3.5 shrink-0 mt-0.5 text-foreground" />
-                  <span className="text-muted-foreground">{r}</span>
+                  <a
+                    href={d.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-foreground hover:underline break-all"
+                  >
+                    {d.title || d.url}
+                  </a>
                 </li>
               ))}
             </ul>
           </Section>
         )}
 
-        {/* Allocation history */}
-        {grant.allocations.length > 0 && (
-          <Section icon={History} title="Allocation history">
-            <div className="space-y-1.5">
-              {grant.allocations.slice(0, 4).map((a) => {
-                const w = (a.totalAwardedEUR / maxAlloc) * 100;
-                return (
-                  <div key={a.year} className="flex items-center gap-2 text-[11px]">
-                    <span className="w-9 tabular-nums text-muted-foreground">{a.year}</span>
-                    <div className="flex-1 h-2.5 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-foreground rounded-full"
-                        style={{ width: `${w}%` }}
-                      />
-                    </div>
-                    <span className="tabular-nums font-medium w-14 text-right">
-                      {fmtBudget(a.totalAwardedEUR)}
-                    </span>
-                    <span className="tabular-nums text-muted-foreground w-12 text-right">
-                      {a.awardCount}
-                    </span>
-                  </div>
-                );
-              })}
-              <div className="flex items-center gap-2 text-[10px] text-muted-foreground pt-1">
-                <span className="w-9" />
-                <span className="flex-1" />
-                <span className="w-14 text-right">awarded</span>
-                <span className="w-12 text-right">awards</span>
-              </div>
+        {/* Identifiers (only when present in source) */}
+        {(grant.schemeCode || grant.program) && (
+          <Section icon={Target} title="Identifiers">
+            <div className="space-y-1 text-xs text-muted-foreground">
+              {grant.program && (
+                <div>
+                  <span className="text-foreground/80 font-medium">Program:</span>{" "}
+                  {grant.program}
+                </div>
+              )}
+              {grant.schemeCode && (
+                <div>
+                  <span className="text-foreground/80 font-medium">Scheme code:</span>{" "}
+                  <span className="tabular-nums">{grant.schemeCode}</span>
+                </div>
+              )}
             </div>
-          </Section>
-        )}
-
-        {/* Notable awardees */}
-        {grant.notableAwardees.length > 0 && (
-          <Section icon={Target} title="Notable awardees">
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              {grant.notableAwardees.join(" · ")}
-            </p>
           </Section>
         )}
 
@@ -1065,7 +1046,7 @@ function GrantDetail({
             <Sparkles className="size-3.5 mt-0.5 text-foreground shrink-0" />
             <div className="text-[11px] leading-relaxed text-muted-foreground">
               Open this scheme in your AI assistant via the{" "}
-              <span className="font-medium text-foreground">Grant.com connector</span>{" "}
+              <span className="font-medium text-foreground">OpenSubsidies connector</span>{" "}
               to auto-match your company and draft a tailored application.
             </div>
           </div>

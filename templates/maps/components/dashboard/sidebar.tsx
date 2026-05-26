@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -30,27 +31,22 @@ import {
   ChevronsUpDown,
   LogOut,
   BrainCircuit,
-  Leaf,
-  HeartPulse,
-  Monitor,
-  Factory,
-  Wheat,
-  Train,
-  GraduationCap,
-  Palette,
-  Users,
-  Briefcase,
-  MapPin,
   Sparkles,
-  Building2,
   Landmark,
   Globe,
   HandCoins,
+  Coins,
+  Receipt,
+  Ticket,
+  TrendingUp,
+  Shuffle,
+  HelpCircle,
+  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useGrantsStore } from "@/store/maps-store";
-import { categories, funders } from "@/mock-data/locations";
-import type { FunderType } from "@/mock-data/locations";
+import { funders } from "@/mock-data/locations";
+import type { FunderType, InstrumentType } from "@/mock-data/locations";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -59,40 +55,29 @@ const navItems = [
   { id: "recents", title: "Recently Viewed", icon: Clock, href: "/recents" },
 ];
 
-const sectorIconMap: Record<
-  string,
-  React.ComponentType<{ className?: string; style?: React.CSSProperties }>
-> = {
-  "brain-circuit": BrainCircuit,
-  leaf: Leaf,
-  "heart-pulse": HeartPulse,
-  monitor: Monitor,
-  factory: Factory,
-  wheat: Wheat,
-  train: Train,
-  "graduation-cap": GraduationCap,
-  palette: Palette,
-  users: Users,
-  briefcase: Briefcase,
-};
-
-const REGIONS = [
-  { id: "all", label: "All regions", flag: "🌍" },
-  { id: "EU", label: "European Union", flag: "🇪🇺" },
-  { id: "Nordics", label: "Nordics", flag: "🇳🇴" },
-  { id: "North America", label: "North America", flag: "🇺🇸" },
-  { id: "Asia & APAC", label: "Asia & APAC", flag: "🇯🇵" },
-  { id: "Latin America", label: "Latin America", flag: "🇧🇷" },
-  { id: "Global", label: "Multilateral / Global", flag: "🌐" },
+const FUNDER_TYPE_OPTIONS: {
+  id: FunderType;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}[] = [
+  { id: "government", label: "Government", icon: Landmark },
+  { id: "supranational", label: "Supranational", icon: Globe },
+  { id: "foundation", label: "Foundation", icon: Sparkles },
+  { id: "unknown", label: "Other / unknown", icon: HelpCircle },
 ];
 
-const FUNDER_TYPE_OPTIONS: { id: FunderType; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: "supranational", label: "Supranational (EU)", icon: Globe },
-  { id: "national", label: "National agencies", icon: Landmark },
-  { id: "regional", label: "Regional", icon: Building2 },
-  { id: "agency", label: "Specialised agencies", icon: HandCoins },
-  { id: "foundation", label: "Foundations", icon: Sparkles },
-  { id: "multilateral", label: "Multilateral", icon: Globe2 },
+const INSTRUMENT_OPTIONS: {
+  id: InstrumentType;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}[] = [
+  { id: "grant", label: "Grant", icon: HandCoins },
+  { id: "loan", label: "Loan", icon: Coins },
+  { id: "guarantee", label: "Guarantee", icon: ShieldCheck },
+  { id: "voucher", label: "Voucher", icon: Ticket },
+  { id: "equity", label: "Equity", icon: TrendingUp },
+  { id: "mixed", label: "Mixed / blended", icon: Shuffle },
+  { id: "unknown", label: "Unspecified", icon: Receipt },
 ];
 
 export function LocationsSidebar({
@@ -101,25 +86,59 @@ export function LocationsSidebar({
   const pathname = usePathname();
   const {
     grants,
-    selectedSector,
-    setSelectedSector,
-    selectedRegion,
-    setSelectedRegion,
+    selectedCountry,
+    setSelectedCountry,
     selectedFunderTypes,
     toggleFunderType,
+    selectedInstrumentTypes,
+    toggleInstrumentType,
     getRecentGrants,
   } = useGrantsStore();
 
   const savedCount = grants.filter((g) => g.isSaved).length;
   const recentCount = getRecentGrants().length;
   const openCount = grants.filter(
-    (g) => g.status === "open" || g.status === "closing-soon"
+    (g) => g.status === "open" || g.status === "closing-soon",
   ).length;
 
-  const getSectorCount = (sectorId: string) => {
-    if (sectorId === "all") return grants.length;
-    return grants.filter((g) => g.sectorId === sectorId).length;
-  };
+  const funderCountryById = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of funders) m.set(f.id, f.country);
+    return m;
+  }, []);
+
+  const grantsByCountry = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const g of grants) {
+      const cc = funderCountryById.get(g.funderId);
+      if (!cc) continue;
+      counts.set(cc, (counts.get(cc) ?? 0) + 1);
+    }
+    return counts;
+  }, [grants, funderCountryById]);
+
+  const countryOptions = React.useMemo(() => {
+    const byCode = new Map<string, { code: string; name: string }>();
+    for (const f of funders) {
+      if (!byCode.has(f.country)) {
+        byCode.set(f.country, { code: f.country, name: f.countryName });
+      }
+    }
+    return [...byCode.values()].sort((a, b) => {
+      const ca = grantsByCountry.get(a.code) ?? 0;
+      const cb = grantsByCountry.get(b.code) ?? 0;
+      if (cb !== ca) return cb - ca;
+      return a.name.localeCompare(b.name);
+    });
+  }, [grantsByCountry]);
+
+  const grantsByInstrument = React.useMemo(() => {
+    const counts = new Map<InstrumentType, number>();
+    for (const g of grants) {
+      counts.set(g.instrumentType, (counts.get(g.instrumentType) ?? 0) + 1);
+    }
+    return counts;
+  }, [grants]);
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
@@ -132,7 +151,7 @@ export function LocationsSidebar({
               </div>
               <div className="flex items-center gap-1 group-data-[collapsible=icon]:hidden">
                 <span className="text-sm font-semibold tracking-tight">
-                  Grant<span className="text-muted-foreground">.com</span>
+                  Open<span className="text-muted-foreground">Subsidies</span>
                 </span>
                 <ChevronsUpDown className="size-3 text-muted-foreground" />
               </div>
@@ -140,7 +159,7 @@ export function LocationsSidebar({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-64">
             <div className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
-              Grant.com — Beta
+              OpenSubsidies — Beta
             </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem>
@@ -211,73 +230,44 @@ export function LocationsSidebar({
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Sectors */}
+        {/* Country filter */}
         <SidebarGroup className="p-0 mt-4">
           <SidebarGroupLabel className="px-0 h-6">
             <span className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-              Sectors
+              Country
             </span>
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  isActive={selectedSector === "all"}
-                  onClick={() => setSelectedSector("all")}
+                  isActive={selectedCountry === "all"}
+                  onClick={() => setSelectedCountry("all")}
                   className="h-7"
                 >
                   <Globe2 className="size-3.5" />
-                  <span className="text-sm">All sectors</span>
+                  <span className="text-sm">All countries</span>
                 </SidebarMenuButton>
-                <SidebarMenuBadge>{getSectorCount("all")}</SidebarMenuBadge>
+                <SidebarMenuBadge>{grants.length}</SidebarMenuBadge>
               </SidebarMenuItem>
-              {categories.map((sector) => {
-                const Icon = sectorIconMap[sector.icon] || MapPin;
-                const count = getSectorCount(sector.id);
+              {countryOptions.map((c) => {
+                const count = grantsByCountry.get(c.code) ?? 0;
                 return (
-                  <SidebarMenuItem key={sector.id}>
+                  <SidebarMenuItem key={c.code}>
                     <SidebarMenuButton
-                      isActive={selectedSector === sector.id}
-                      onClick={() => setSelectedSector(sector.id)}
+                      isActive={selectedCountry === c.code}
+                      onClick={() => setSelectedCountry(c.code)}
                       className="h-7"
                     >
-                      <Icon
-                        className="size-3.5"
-                        style={{ color: sector.color }}
-                      />
-                      <span className="text-sm">{sector.name}</span>
+                      <span className="size-3.5 text-center text-[10px] font-medium tabular-nums text-muted-foreground leading-none">
+                        {c.code}
+                      </span>
+                      <span className="text-sm">{c.name}</span>
                     </SidebarMenuButton>
                     {count > 0 && <SidebarMenuBadge>{count}</SidebarMenuBadge>}
                   </SidebarMenuItem>
                 );
               })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {/* Region filter */}
-        <SidebarGroup className="p-0 mt-4">
-          <SidebarGroupLabel className="px-0 h-6">
-            <span className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-              Region
-            </span>
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {REGIONS.map((r) => (
-                <SidebarMenuItem key={r.id}>
-                  <SidebarMenuButton
-                    isActive={selectedRegion === r.id}
-                    onClick={() => setSelectedRegion(r.id)}
-                    className="h-7"
-                  >
-                    <span className="size-3.5 text-center text-[13px] leading-none">
-                      {r.flag}
-                    </span>
-                    <span className="text-sm">{r.label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -295,6 +285,7 @@ export function LocationsSidebar({
                 const Icon = ft.icon;
                 const isActive = selectedFunderTypes.includes(ft.id);
                 const count = funders.filter((f) => f.type === ft.id).length;
+                if (count === 0) return null;
                 return (
                   <SidebarMenuItem key={ft.id}>
                     <SidebarMenuButton
@@ -305,7 +296,39 @@ export function LocationsSidebar({
                       <Icon className="size-3.5" />
                       <span className="text-sm">{ft.label}</span>
                     </SidebarMenuButton>
-                    {count > 0 && <SidebarMenuBadge>{count}</SidebarMenuBadge>}
+                    <SidebarMenuBadge>{count}</SidebarMenuBadge>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* Instrument filter */}
+        <SidebarGroup className="p-0 mt-4">
+          <SidebarGroupLabel className="px-0 h-6">
+            <span className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+              Instrument
+            </span>
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {INSTRUMENT_OPTIONS.map((it) => {
+                const Icon = it.icon;
+                const isActive = selectedInstrumentTypes.includes(it.id);
+                const count = grantsByInstrument.get(it.id) ?? 0;
+                if (count === 0) return null;
+                return (
+                  <SidebarMenuItem key={it.id}>
+                    <SidebarMenuButton
+                      isActive={isActive}
+                      onClick={() => toggleInstrumentType(it.id)}
+                      className={cn("h-7", isActive && "font-medium")}
+                    >
+                      <Icon className="size-3.5" />
+                      <span className="text-sm">{it.label}</span>
+                    </SidebarMenuButton>
+                    <SidebarMenuBadge>{count}</SidebarMenuBadge>
                   </SidebarMenuItem>
                 );
               })}
@@ -326,12 +349,12 @@ export function LocationsSidebar({
               </div>
             </div>
             <div className="text-muted-foreground text-xs leading-snug">
-              Use the Grant.com connector inside your AI assistant to match
-              your eligibility against every grant in this dashboard.
+              Use the OpenSubsidies connector inside your AI assistant to
+              match your eligibility against every grant in this dashboard.
             </div>
             <Button size="sm" className="w-full mt-1" asChild>
               <Link
-                href="https://grant.com/connectors"
+                href="https://www.opensubsidies.com/connectors"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -340,7 +363,7 @@ export function LocationsSidebar({
             </Button>
           </div>
           <p className="text-center text-[11px] text-muted-foreground leading-relaxed">
-            Grant.com indexes public grants worldwide.
+            OpenSubsidies indexes public grants worldwide.
             <br />
             Coverage: Nordics → EU → US → Global.
           </p>

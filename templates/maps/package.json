@@ -1,10 +1,13 @@
 {
-  "name": "grant-com",
+  "name": "opensubsidies",
   "version": "0.1.0",
-  "description": "Grant.com — global, interactive grant intelligence dashboard. Customised from the square-ui maps template.",
+  "description": "OpenSubsidies — global, interactive grant intelligence dashboard backed by the grants-sources catalog.",
   "private": true,
   "scripts": {
+    "catalog": "tsx scripts/build-catalog.ts",
+    "predev": "pnpm catalog",
     "dev": "next dev",
+    "prebuild": "pnpm catalog",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -36,12 +39,16 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.5",
+    "gray-matter": "^4.0.3",
+    "js-yaml": "^4.1.0",
     "tailwindcss": "^4",
+    "tsx": "^4.20.6",
     "typescript": "^5"
   }
 }

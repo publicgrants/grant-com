@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   images: {
-    // Public favicon services + funder homepages used by the Grant.com
+    // Public favicon services + funder homepages used by the OpenSubsidies
     // dashboard's <CardFaviconBackdrop> watermark and inline funder badges.
     remotePatterns: [
       // Google S2 favicon service — primary source.
